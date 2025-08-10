@@ -1,3 +1,4 @@
+timeunit 1ns; timeprecision 1ps;
 // Assertions and cover properties for AXI4-lite subset behavior used here
 module axi4_assert_bind (axi4_if.dut_mp dut_if);
 

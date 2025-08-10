@@ -1,3 +1,4 @@
+timeunit 1ns; timeprecision 1ps;
 module axi4_memory #(
     parameter DATA_WIDTH = 32,
     parameter ADDR_WIDTH = 10,    // For 1024 locations

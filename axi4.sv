@@ -1,3 +1,4 @@
+timeunit 1ns; timeprecision 1ps;
 module axi4 #(
     parameter DATA_WIDTH = 32,
     parameter ADDR_WIDTH = 16,

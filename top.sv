@@ -1,3 +1,4 @@
+timeunit 1ns; timeprecision 1ps;
 module top;
 
     parameter DATA_WIDTH = 32;
