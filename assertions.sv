@@ -30,7 +30,7 @@ module axi4_assert_bind (axi4_if.dut_mp dut_if);
   aw_then_w: assert property (s_aw_hs |-> ##[1:$] s_w_hs);
 
   // After last write data is accepted, BVALID should eventually assert
-  last_w_then_b: assert property ((s_w_hs && dut_if.WLAST) |-> ##[1:10] dut_if.BVALID);
+  last_w_then_b: assert property ((dut_if.WVALID && dut_if.WREADY && dut_if.WLAST) |-> ##[1:10] dut_if.BVALID);
 
   // When RVALID asserted, RRESP is OKAY or SLVERR only
   rresp_legal: assert property (dut_if.RVALID |-> (dut_if.RRESP inside {2'b00,2'b10}));
