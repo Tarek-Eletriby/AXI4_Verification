@@ -18,6 +18,12 @@ module axi4 #(
     
     wire [ADDR_WIDTH-1:0] write_addr_incr,read_addr_incr;
     
+    // Added declarations for boundary and address validity checks
+    wire write_boundary_cross;
+    wire read_boundary_cross;
+    wire write_addr_valid;
+    wire read_addr_valid;
+    
     
     
     // Address increment calculation
@@ -57,7 +63,8 @@ module axi4 #(
     reg [2:0] read_state;
     localparam R_IDLE = 3'd0,
                R_ADDR = 3'd1,
-               R_DATA = 3'd2;
+               R_DATA = 3'd2,
+               R_WAIT = 3'd3; // wait one cycle for synchronous read data
 
     // Registered memory read data for timing
     reg [DATA_WIDTH-1:0] mem_rdata_reg;
@@ -192,18 +199,25 @@ module axi4 #(
                 end
                 
                 R_ADDR: begin
-                    // Start first read
+                    // Issue memory read for first beat
                     if (read_addr_valid && !read_boundary_cross) begin
                         mem_en <= 1'b1;
                         mem_addr <= read_addr >> 2;  // Convert to word address
                     end
+                    // Wait one cycle for synchronous memory to output data
+                    read_state <= R_WAIT;
+                end
+
+                R_WAIT: begin
+                    // Capture memory output into a register for stable presentation
+                    mem_rdata_reg <= mem_rdata;
                     read_state <= R_DATA;
                 end
                 
                 R_DATA: begin
-                    // Present read data
+                    // Present read data from registered value
                     if (read_addr_valid && !read_boundary_cross) begin
-                        axi_if.RDATA <= mem_rdata;
+                        axi_if.RDATA <= mem_rdata_reg;
                         axi_if.RRESP <= 2'b00;  // OKAY
                     end else begin
                         axi_if.RDATA <= {DATA_WIDTH{1'b0}};
@@ -226,8 +240,8 @@ module axi4 #(
                                 mem_en <= 1'b1;
                                 mem_addr <= (read_addr + read_addr_incr) >> 2;
                             end
-                            
-                            // Stay in R_DATA for next transfer
+                            // Wait again for next data
+                            read_state <= R_WAIT;
                         end else begin
                             // End of burst
                             axi_if.RLAST <= 1'b0;
