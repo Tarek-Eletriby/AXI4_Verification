@@ -130,10 +130,11 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.WLAST  = 0;
     end
 
+    // Level handshake on B channel to avoid races
     wait (axi_if.BVALID);
-    @(negedge axi_if.ACLK);
     axi_if.BREADY = 1;
     @(negedge axi_if.ACLK);
+    while (axi_if.BVALID) @(negedge axi_if.ACLK);
     axi_if.BREADY = 0;
 
     // Illegal write: 4KB boundary crossing
@@ -156,10 +157,11 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.WLAST  = 0;
     end
 
+    // Level handshake on B channel
     wait (axi_if.BVALID);
-    @(negedge axi_if.ACLK);
     axi_if.BREADY = 1;
     @(negedge axi_if.ACLK);
+    while (axi_if.BVALID) @(negedge axi_if.ACLK);
     axi_if.BREADY = 0;
 
     // Illegal read: out-of-range address
@@ -172,12 +174,13 @@ module axi4_tb(axi4_if.tb_mp axi_if);
     @(negedge axi_if.ACLK);
     axi_if.ARVALID = 0;
 
+    // Hold RREADY high through the whole burst
+    axi_if.RREADY = 1;
     for (int j = 0; j <= 1; j++) begin
       wait (axi_if.RVALID);
-      axi_if.RREADY = 1;
       @(negedge axi_if.ACLK);
-      axi_if.RREADY = 0;
     end
+    axi_if.RREADY = 0;
 
     // Illegal read: 4KB boundary crossing
     @(negedge axi_if.ACLK);
@@ -189,12 +192,12 @@ module axi4_tb(axi4_if.tb_mp axi_if);
     @(negedge axi_if.ACLK);
     axi_if.ARVALID = 0;
 
+    axi_if.RREADY = 1;
     for (int m = 0; m <= 4; m++) begin
       wait (axi_if.RVALID);
-      axi_if.RREADY = 1;
       @(negedge axi_if.ACLK);
-      axi_if.RREADY = 0;
     end
+    axi_if.RREADY = 0;
   endtask
 
   task automatic golden_model();
