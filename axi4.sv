@@ -1,0 +1,244 @@
+module axi4 #(
+    parameter DATA_WIDTH = 32,
+    parameter ADDR_WIDTH = 16,
+    parameter MEMORY_DEPTH = 1024
+)(axi4_if.dut_mp axi_if);
+
+    // Internal memory signals
+    reg mem_en, mem_we;
+    reg [$clog2(MEMORY_DEPTH)-1:0] mem_addr;
+    reg [DATA_WIDTH-1:0] mem_wdata;
+    wire [DATA_WIDTH-1:0] mem_rdata;
+
+    // Address and burst management
+    reg [ADDR_WIDTH-1:0] write_addr, read_addr;
+    reg [7:0] write_burst_len, read_burst_len;
+    reg [7:0] write_burst_cnt, read_burst_cnt;
+    reg [2:0] write_size, read_size;
+    
+    wire [ADDR_WIDTH-1:0] write_addr_incr,read_addr_incr;
+    
+    
+    
+    // Address increment calculation
+    assign  write_addr_incr = (1 << write_size);
+    assign  read_addr_incr  = (1 << read_size);
+    
+    // Address boundary check (4KB boundary = 12 bits)
+    assign write_boundary_cross = ((write_addr & 12'hFFF) + (write_burst_len << write_size)) > 12'hFFF;
+    assign read_boundary_cross = ((read_addr & 12'hFFF) + (read_burst_len << read_size)) > 12'hFFF;
+    
+    // Address range check
+    assign write_addr_valid = (write_addr >> 2) < MEMORY_DEPTH;
+    assign read_addr_valid = (read_addr >> 2) < MEMORY_DEPTH;
+
+    // Memory instance
+    axi4_memory #(
+        .DATA_WIDTH(DATA_WIDTH),
+        .ADDR_WIDTH($clog2(MEMORY_DEPTH)),
+        .DEPTH(MEMORY_DEPTH)
+    ) mem_inst (
+        .clk(axi_if.ACLK),
+        .rst_n(axi_if.ARESETn),
+        .mem_en(mem_en),
+        .mem_we(mem_we),
+        .mem_addr(mem_addr),
+        .mem_wdata(mem_wdata),
+        .mem_rdata(mem_rdata)
+    );
+
+    // FSM states
+    reg [2:0] write_state;
+    localparam W_IDLE = 3'd0,
+               W_ADDR = 3'd1,
+               W_DATA = 3'd2,
+               W_RESP = 3'd3;
+
+    reg [2:0] read_state;
+    localparam R_IDLE = 3'd0,
+               R_ADDR = 3'd1,
+               R_DATA = 3'd2;
+
+    // Registered memory read data for timing
+    reg [DATA_WIDTH-1:0] mem_rdata_reg;
+
+    always @(posedge axi_if.ACLK or negedge axi_if.ARESETn) begin
+        if (!axi_if.ARESETn) begin
+            // Reset all outputs
+            axi_if.AWREADY <= 1'b1;  // Ready to accept address
+            axi_if.WREADY <= 1'b0;
+            axi_if.BVALID <= 1'b0;
+            axi_if.BRESP <= 2'b00;
+            
+            axi_if.ARREADY <= 1'b1;  // Ready to accept address
+            axi_if.RVALID <= 1'b0;
+            axi_if.RRESP <= 2'b00;
+            axi_if.RDATA <= {DATA_WIDTH{1'b0}};
+            axi_if.RLAST <= 1'b0;
+            
+            // Reset internal state
+            write_state <= W_IDLE;
+            read_state <= R_IDLE;
+            mem_en <= 1'b0;
+            mem_we <= 1'b0;
+            mem_addr <= {$clog2(MEMORY_DEPTH){1'b0}};
+            mem_wdata <= {DATA_WIDTH{1'b0}};
+            
+            // Reset address tracking
+            write_addr <= {ADDR_WIDTH{1'b0}};
+            read_addr <= {ADDR_WIDTH{1'b0}};
+            write_burst_len <= 8'b0;
+            read_burst_len <= 8'b0;
+            write_burst_cnt <= 8'b0;
+            read_burst_cnt <= 8'b0;
+            write_size <= 3'b0;
+            read_size <= 3'b0;
+            
+            mem_rdata_reg <= {DATA_WIDTH{1'b0}};
+            
+        end else begin
+            // Default memory disable
+            mem_en <= 1'b0;
+            mem_we <= 1'b0;
+
+            // --------------------------
+            // Write Channel FSM
+            // --------------------------
+            case (write_state)
+                W_IDLE: begin
+                    axi_if.AWREADY <= 1'b1;
+                    axi_if.WREADY <= 1'b0;
+                    axi_if.BVALID <= 1'b0;
+                    
+                    if (axi_if.AWVALID && axi_if.AWREADY) begin
+                        // Capture address phase information
+                        write_addr <= axi_if.AWADDR;
+                        write_burst_len <= axi_if.AWLEN;
+                        write_burst_cnt <= axi_if.AWLEN;
+                        write_size <= axi_if.AWSIZE;
+                        
+                        axi_if.AWREADY <= 1'b0;
+                        write_state <= W_ADDR;
+                    end
+                end
+                
+                W_ADDR: begin
+                    // Transition to data phase
+                    axi_if.WREADY <= 1'b1;
+                    write_state <= W_DATA;
+                end
+                
+                W_DATA: begin
+                    if (axi_if.WVALID && axi_if.WREADY) begin
+                        // Check if address is valid
+                        if (write_addr_valid && !write_boundary_cross) begin
+                            // Perform write operation
+                            mem_en <= 1'b1;
+                            mem_we <= 1'b1;
+                            mem_addr <= write_addr >> 2;  // Convert to word address
+                            mem_wdata <= axi_if.WDATA;
+                        end
+                        
+                        // Check for last transfer
+                        if (axi_if.WLAST || write_burst_cnt == 0) begin
+                            axi_if.WREADY <= 1'b0;
+                            write_state <= W_RESP;
+                            
+                            // Set response - delayed until write completion
+                            if (!write_addr_valid || write_boundary_cross) begin
+                                axi_if.BRESP <= 2'b10;  // SLVERR
+                            end else begin
+                                axi_if.BRESP <= 2'b00;  // OKAY
+                            end
+                            axi_if.BVALID <= 1'b1;
+                        end else begin
+                            // Continue burst - increment address
+                            write_addr <= write_addr + write_addr_incr;
+                            write_burst_cnt <= write_burst_cnt - 1'b1;
+                        end
+                    end
+                end
+                
+                W_RESP: begin
+                    if (axi_if.BREADY && axi_if.BVALID) begin
+                        axi_if.BVALID <= 1'b0;
+                        axi_if.BRESP <= 2'b00;
+                        write_state <= W_IDLE;
+                    end
+                end
+                
+                default: write_state <= W_IDLE;
+            endcase
+
+            // --------------------------
+            // Read Channel FSM
+            // --------------------------
+            case (read_state)
+                R_IDLE: begin
+                    axi_if.ARREADY <= 1'b1;
+                    axi_if.RVALID <= 1'b0;
+                    axi_if.RLAST <= 1'b0;
+                    
+                    if (axi_if.ARVALID && axi_if.ARREADY) begin
+                        // Capture address phase information
+                        read_addr <= axi_if.ARADDR;
+                        read_burst_len <= axi_if.ARLEN;
+                        read_burst_cnt <= axi_if.ARLEN;
+                        read_size <= axi_if.ARSIZE;
+                        
+                        axi_if.ARREADY <= 1'b0;
+                        read_state <= R_ADDR;
+                    end
+                end
+                
+                R_ADDR: begin
+                    // Start first read
+                    if (read_addr_valid && !read_boundary_cross) begin
+                        mem_en <= 1'b1;
+                        mem_addr <= read_addr >> 2;  // Convert to word address
+                    end
+                    read_state <= R_DATA;
+                end
+                
+                R_DATA: begin
+                    // Present read data
+                    if (read_addr_valid && !read_boundary_cross) begin
+                        axi_if.RDATA <= mem_rdata;
+                        axi_if.RRESP <= 2'b00;  // OKAY
+                    end else begin
+                        axi_if.RDATA <= {DATA_WIDTH{1'b0}};
+                        axi_if.RRESP <= 2'b10;  // SLVERR
+                    end
+                    
+                    axi_if.RVALID <= 1'b1;
+                    axi_if.RLAST <= (read_burst_cnt == 0);
+                    
+                    if (axi_if.RREADY && axi_if.RVALID) begin
+                        axi_if.RVALID <= 1'b0;
+                        
+                        if (read_burst_cnt > 0) begin
+                            // Continue burst
+                            read_addr <= read_addr + read_addr_incr;
+                            read_burst_cnt <= read_burst_cnt - 1'b1;
+                            
+                            // Start next read
+                            if (read_addr_valid && !read_boundary_cross) begin
+                                mem_en <= 1'b1;
+                                mem_addr <= (read_addr + read_addr_incr) >> 2;
+                            end
+                            
+                            // Stay in R_DATA for next transfer
+                        end else begin
+                            // End of burst
+                            axi_if.RLAST <= 1'b0;
+                            read_state <= R_IDLE;
+                        end
+                    end
+                end
+                
+                default: read_state <= R_IDLE;
+            endcase
+        end
+    end
+
+endmodule
