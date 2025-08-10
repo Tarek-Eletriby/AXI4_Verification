@@ -1,3 +1,4 @@
+timeunit 1ns; timeprecision 1ps;
 module axi4_tb(axi4_if.tb_mp axi_if);
 `include "axi4_transaction.sv"
 
@@ -219,6 +220,9 @@ module axi4_tb(axi4_if.tb_mp axi_if);
   endtask
 
   initial begin
+    $timeformat(-9, 0, " ns", 10);
+    $display("[TB] Start at %0t", $time);
+
     // Init TB-driven signals
     axi_if.AWADDR  = '0;
     axi_if.AWLEN   = '0;
@@ -250,6 +254,14 @@ module axi4_tb(axi4_if.tb_mp axi_if);
     // Display functional coverage summary
     $display("Functional coverage: %0.2f%%", cov.get_inst_coverage());
 
+    $display("[TB] Finish at %0t", $time);
+    $finish;
+  end
+
+  // Watchdog to ensure log output even if stalled
+  initial begin
+    #100000ns;
+    $display("[TB][TIMEOUT] No completion by %0t", $time);
     $finish;
   end
 endmodule
