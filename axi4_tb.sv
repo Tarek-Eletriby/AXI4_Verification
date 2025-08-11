@@ -107,8 +107,9 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       for (int j = 0; j < num_beats; j++) begin
         // Wait for data beat
         do @(posedge axi_if.ACLK); while (!axi_if.RVALID);
-        sim_output.push_back(axi_if.RDATA);
+        // Sample after negedge to ensure DUT NBA updates have settled
         @(negedge axi_if.ACLK);
+        sim_output.push_back(axi_if.RDATA);
       end
       axi_if.RREADY = 0;
     end
