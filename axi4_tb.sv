@@ -65,29 +65,29 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.AWLEN   = stim_array[i].awlen;
       axi_if.AWSIZE  = stim_array[i].awsize;
       axi_if.AWVALID = 1;
-      wait (axi_if.AWREADY);
+      // Wait for handshake on a clock edge
+      do @(posedge axi_if.ACLK); while (!axi_if.AWREADY);
       @(negedge axi_if.ACLK);
       axi_if.AWVALID = 0;
-            $display("WA");
+
       // Write Data
       for (int j = 0; j <= stim_array[i].awlen; j++) begin
         axi_if.WDATA  = stim_array[i].wdata[j];
-        axi_if.WVALID = 1;
         axi_if.WLAST  = (j == stim_array[i].awlen);
-        wait (axi_if.WREADY);
+        axi_if.WVALID = 1;
+        // Wait for handshake on a clock edge
+        do @(posedge axi_if.ACLK); while (!axi_if.WREADY);
         @(negedge axi_if.ACLK);
         axi_if.WVALID = 0;
         axi_if.WLAST  = 0;
       end
-          $display("WD");
 
       // Write Response
-      wait (axi_if.BVALID);
-      @(negedge axi_if.ACLK);
       axi_if.BREADY = 1;
+      // Wait for handshake on a clock edge
+      do @(posedge axi_if.ACLK); while (!axi_if.BVALID);
       @(negedge axi_if.ACLK);
       axi_if.BREADY = 0;
-          $display("WR");
 
       // Read Address (use same address)
       @(negedge axi_if.ACLK);
@@ -95,19 +95,21 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.ARLEN   = stim_array[i].arlen;
       axi_if.ARSIZE  = stim_array[i].arsize;
       axi_if.ARVALID = 1;
-      wait (axi_if.ARREADY);
+      // Wait for handshake on a clock edge
+      do @(posedge axi_if.ACLK); while (!axi_if.ARREADY);
       @(negedge axi_if.ACLK);
       axi_if.ARVALID = 0;
-        $display("RA");
-      // Read Data
-      for (int j = 0; j <= stim_array[i].arlen; j++) begin
-        axi_if.RREADY = 1;
-        wait (axi_if.RVALID);
+
+      // Read Data: keep RREADY asserted through the burst
+      int unsigned num_beats = stim_array[i].arlen + 1;
+      axi_if.RREADY = 1;
+      for (int j = 0; j < num_beats; j++) begin
+        // Wait for data beat
+        do @(posedge axi_if.ACLK); while (!axi_if.RVALID);
         sim_output.push_back(axi_if.RDATA);
         @(negedge axi_if.ACLK);
-        axi_if.RREADY = 0;
       end
-      $display("RD");
+      axi_if.RREADY = 0;
     end
   endtask
 
