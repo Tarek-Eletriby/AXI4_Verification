@@ -20,8 +20,8 @@ module axi4 #(
     wire [ADDR_WIDTH-1:0] write_addr_incr,read_addr_incr;
     
     // Added declarations for boundary and address validity checks
-    wire write_boundary_cross;
-    wire read_boundary_cross;
+    reg write_boundary_cross_burst;
+    reg read_boundary_cross_burst;
     wire write_addr_valid;
     wire read_addr_valid;
     
@@ -31,9 +31,8 @@ module axi4 #(
     assign  write_addr_incr = (1 << write_size);
     assign  read_addr_incr  = (1 << read_size);
     
-    // Address boundary check (4KB boundary = 12 bits)
-    assign write_boundary_cross = ((write_addr & 12'hFFF) + (write_burst_len << write_size)) > 12'hFFF;
-    assign read_boundary_cross = ((read_addr & 12'hFFF) + (read_burst_len << read_size)) > 12'hFFF;
+    // Address boundary check (4KB boundary = 12 bits) - latched per burst at address handshake
+    // The flags are computed once from the starting address and full burst length
     
     // Address range check
     assign write_addr_valid = (write_addr >> 2) < MEMORY_DEPTH;
@@ -125,6 +124,8 @@ module axi4 #(
                         write_burst_len <= axi_if.AWLEN;
                         write_burst_cnt <= axi_if.AWLEN;
                         write_size <= axi_if.AWSIZE;
+                        // Latch boundary-cross status for the whole burst
+                        write_boundary_cross_burst <= ((axi_if.AWADDR & 12'hFFF) + (axi_if.AWLEN << axi_if.AWSIZE)) > 12'hFFF;
                         
                         axi_if.AWREADY <= 1'b0;
                         write_state <= W_ADDR;
@@ -140,7 +141,7 @@ module axi4 #(
                 W_DATA: begin
                     if (axi_if.WVALID && axi_if.WREADY) begin
                         // Check if address is valid
-                        if (write_addr_valid && !write_boundary_cross) begin
+                        if (write_addr_valid && !write_boundary_cross_burst) begin
                             // Perform write operation
                             mem_en <= 1'b1;
                             mem_we <= 1'b1;
@@ -154,7 +155,7 @@ module axi4 #(
                             write_state <= W_RESP;
                             
                             // Set response - delayed until write completion
-                            if (!write_addr_valid || write_boundary_cross) begin
+                            if (!write_addr_valid || write_boundary_cross_burst) begin
                                 axi_if.BRESP <= 2'b10;  // SLVERR
                             end else begin
                                 axi_if.BRESP <= 2'b00;  // OKAY
@@ -194,6 +195,8 @@ module axi4 #(
                         read_burst_len <= axi_if.ARLEN;
                         read_burst_cnt <= axi_if.ARLEN;
                         read_size <= axi_if.ARSIZE;
+                        // Latch boundary-cross status for the whole burst
+                        read_boundary_cross_burst <= ((axi_if.ARADDR & 12'hFFF) + (axi_if.ARLEN << axi_if.ARSIZE)) > 12'hFFF;
                         
                         axi_if.ARREADY <= 1'b0;
                         read_state <= R_ADDR;
@@ -201,16 +204,17 @@ module axi4 #(
                 end
                 
                 R_ADDR: begin
-                    // Issue memory read for first beat
-                    if (read_addr_valid && !read_boundary_cross) begin
-                        mem_en <= 1'b1;
-                        mem_addr <= read_addr >> 2;  // Convert to word address
-                    end
+                    // Prepare to issue memory read for first beat next cycle
                     // Wait for memory to latch enable/address (synchronous read)
                     read_state <= R_WAIT;
                 end
 
                 R_WAIT: begin
+                    // Assert memory enable for one cycle with current read_addr
+                    if (read_addr_valid && !read_boundary_cross_burst) begin
+                        mem_en <= 1'b1;
+                        mem_addr <= read_addr >> 2;  // Convert to word address
+                    end
                     // Extra pipeline stage for synchronous memory to produce data
                     read_state <= R_PIPE;
                 end
@@ -223,7 +227,7 @@ module axi4 #(
                 
                 R_DATA: begin
                     // Present read data from registered value
-                    if (read_addr_valid && !read_boundary_cross) begin
+                    if (read_addr_valid && !read_boundary_cross_burst) begin
                         axi_if.RDATA <= mem_rdata_reg;
                         axi_if.RRESP <= 2'b00;  // OKAY
                     end else begin
@@ -238,15 +242,10 @@ module axi4 #(
                         axi_if.RVALID <= 1'b0;
                         
                         if (read_burst_cnt > 0) begin
-                            // Continue burst
+                            // Continue burst: update address and count; mem_en will be asserted in R_WAIT next cycle
                             read_addr <= read_addr + read_addr_incr;
                             read_burst_cnt <= read_burst_cnt - 1'b1;
                             
-                            // Start next read
-                            if (read_addr_valid && !read_boundary_cross) begin
-                                mem_en <= 1'b1;
-                                mem_addr <= (read_addr + read_addr_incr) >> 2;
-                            end
                             // Wait for next data through pipeline
                             read_state <= R_WAIT;
                         end else begin
