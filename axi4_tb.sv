@@ -58,6 +58,7 @@ module axi4_tb(axi4_if.tb_mp axi_if);
   endtask
 
   task automatic drive_stim();
+    int unsigned num_beats;
     foreach (stim_array[i]) begin
       // Write Address
       @(negedge axi_if.ACLK);
@@ -101,7 +102,7 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.ARVALID = 0;
 
       // Read Data: keep RREADY asserted through the burst
-      int unsigned num_beats = stim_array[i].arlen + 1;
+      num_beats = stim_array[i].arlen + 1;
       axi_if.RREADY = 1;
       for (int j = 0; j < num_beats; j++) begin
         // Wait for data beat
