@@ -65,7 +65,8 @@ module axi4 #(
     localparam R_IDLE = 3'd0,
                R_ADDR = 3'd1,
                R_DATA = 3'd2,
-               R_WAIT = 3'd3; // wait one cycle for synchronous read data
+               R_WAIT = 3'd3, // wait one cycle for memory to see mem_en/address
+               R_PIPE = 3'd4; // extra cycle to capture mem_rdata into register
 
     // Registered memory read data for timing
     reg [DATA_WIDTH-1:0] mem_rdata_reg;
@@ -205,11 +206,16 @@ module axi4 #(
                         mem_en <= 1'b1;
                         mem_addr <= read_addr >> 2;  // Convert to word address
                     end
-                    // Wait one cycle for synchronous memory to output data
+                    // Wait for memory to latch enable/address (synchronous read)
                     read_state <= R_WAIT;
                 end
 
                 R_WAIT: begin
+                    // Extra pipeline stage for synchronous memory to produce data
+                    read_state <= R_PIPE;
+                end
+
+                R_PIPE: begin
                     // Capture memory output into a register for stable presentation
                     mem_rdata_reg <= mem_rdata;
                     read_state <= R_DATA;
@@ -241,7 +247,7 @@ module axi4 #(
                                 mem_en <= 1'b1;
                                 mem_addr <= (read_addr + read_addr_incr) >> 2;
                             end
-                            // Wait again for next data
+                            // Wait for next data through pipeline
                             read_state <= R_WAIT;
                         end else begin
                             // End of burst
