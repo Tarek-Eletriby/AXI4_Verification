@@ -13,8 +13,8 @@ module axi4 #(
 
     // Address and burst management
     reg [ADDR_WIDTH-1:0] write_addr, read_addr;
-    reg [7:0] write_burst_len, read_burst_len;
-    reg [7:0] write_burst_cnt, read_burst_cnt;
+    reg [7:0] write_burst_len, read_burst_len;          // captured AWLEN/ARLEN (beats-1)
+    reg [8:0] write_beats_rem, read_beats_rem;          // remaining beats (AWLEN+1/ARLEN+1)
     reg [2:0] write_size, read_size;
     
     wire [ADDR_WIDTH-1:0] write_addr_incr,read_addr_incr;
@@ -24,8 +24,6 @@ module axi4 #(
     wire read_boundary_cross;
     wire write_addr_valid;
     wire read_addr_valid;
-    
-    
     
     // Address increment calculation
     assign  write_addr_incr = (1 << write_size);
@@ -97,8 +95,8 @@ module axi4 #(
             read_addr <= {ADDR_WIDTH{1'b0}};
             write_burst_len <= 8'b0;
             read_burst_len <= 8'b0;
-            write_burst_cnt <= 8'b0;
-            read_burst_cnt <= 8'b0;
+            write_beats_rem <= 9'd0;
+            read_beats_rem <= 9'd0;
             write_size <= 3'b0;
             read_size <= 3'b0;
             
@@ -122,7 +120,7 @@ module axi4 #(
                         // Capture address phase information
                         write_addr <= axi_if.AWADDR;
                         write_burst_len <= axi_if.AWLEN;
-                        write_burst_cnt <= axi_if.AWLEN;
+                        write_beats_rem <= {1'b0, axi_if.AWLEN} + 9'd1; // AWLEN+1
                         write_size <= axi_if.AWSIZE;
                         
                         axi_if.AWREADY <= 1'b0;
@@ -146,13 +144,14 @@ module axi4 #(
                             mem_addr <= write_addr >> 2;  // Convert to word address
                             mem_wdata <= axi_if.WDATA;
                         end
-                        
-                        // Check for last transfer
-                        if (axi_if.WLAST || write_burst_cnt == 0) begin
+
+                        // Determine if this is the last beat (independent of WLAST)
+                        if (write_beats_rem == 9'd1) begin
+                            // Last beat just accepted -> drive response
                             axi_if.WREADY <= 1'b0;
                             write_state <= W_RESP;
                             
-                            // Set response - delayed until write completion
+                            // Set response
                             if (!write_addr_valid || write_boundary_cross) begin
                                 axi_if.BRESP <= 2'b10;  // SLVERR
                             end else begin
@@ -160,9 +159,9 @@ module axi4 #(
                             end
                             axi_if.BVALID <= 1'b1;
                         end else begin
-                            // Continue burst - increment address
+                            // Continue burst - increment address and decrement remaining
                             write_addr <= write_addr + write_addr_incr;
-                            write_burst_cnt <= write_burst_cnt - 1'b1;
+                            write_beats_rem <= write_beats_rem - 9'd1;
                         end
                     end
                 end
@@ -191,7 +190,7 @@ module axi4 #(
                         // Capture address phase information
                         read_addr <= axi_if.ARADDR;
                         read_burst_len <= axi_if.ARLEN;
-                        read_burst_cnt <= axi_if.ARLEN;
+                        read_beats_rem <= {1'b0, axi_if.ARLEN} + 9'd1; // ARLEN+1
                         read_size <= axi_if.ARSIZE;
                         
                         axi_if.ARREADY <= 1'b0;
@@ -226,15 +225,15 @@ module axi4 #(
                     end
                     
                     axi_if.RVALID <= 1'b1;
-                    axi_if.RLAST <= (read_burst_cnt == 0);
+                    axi_if.RLAST <= (read_beats_rem == 9'd1);
                     
                     if (axi_if.RREADY && axi_if.RVALID) begin
                         axi_if.RVALID <= 1'b0;
                         
-                        if (read_burst_cnt > 0) begin
+                        if (read_beats_rem > 9'd1) begin
                             // Continue burst
                             read_addr <= read_addr + read_addr_incr;
-                            read_burst_cnt <= read_burst_cnt - 1'b1;
+                            read_beats_rem <= read_beats_rem - 9'd1;
                             
                             // Start next read
                             if (read_addr_valid && !read_boundary_cross) begin
