@@ -64,8 +64,8 @@ module axi4 #(
     localparam R_IDLE = 3'd0,
                R_ADDR = 3'd1,
                R_DATA = 3'd2,
-               R_WAIT = 3'd3; // wait one cycle for synchronous read data
-
+               R_WAIT = 3'd3, // wait one cycle for synchronous read data
+               R_PIPE = 3'd4;
     // Registered memory read data for timing
     reg [DATA_WIDTH-1:0] mem_rdata_reg;
 
@@ -119,7 +119,8 @@ module axi4 #(
                     axi_if.AWREADY <= 1'b1;
                     axi_if.WREADY <= 1'b0;
                     axi_if.BVALID <= 1'b0;
-                    
+                    axi_if.BRESP <= 2'b00;
+
                     if (axi_if.AWVALID && axi_if.AWREADY) begin
                         // Capture address phase information
                         write_addr <= axi_if.AWADDR;
@@ -128,14 +129,13 @@ module axi4 #(
                         write_size <= axi_if.AWSIZE;
                         // Latch boundary-cross status for the whole burst
                         write_boundary_cross_burst <= (((axi_if.AWADDR & 12'hFFF) + (((axi_if.AWLEN + 1) << axi_if.AWSIZE) - 1)) > 12'hFFF);
-                        
-                        axi_if.AWREADY <= 1'b0;
                         write_state <= W_ADDR;
                     end
                 end
                 
                 W_ADDR: begin
                     // Transition to data phase
+                    axi_if.AWREADY <= 1'b0;
                     axi_if.WREADY <= 1'b1;
                     write_state <= W_DATA;
                 end
@@ -173,7 +173,7 @@ module axi4 #(
                 W_RESP: begin
                     if (axi_if.BREADY && axi_if.BVALID) begin
                         axi_if.BVALID <= 1'b0;
-                        axi_if.BRESP <= 2'b00;
+                        //axi_if.BRESP <= 2'b00;
                         write_state <= W_IDLE;
                     end
                 end
@@ -216,10 +216,15 @@ module axi4 #(
 
                 R_WAIT: begin
                     // Capture memory output into a register for stable presentation
+                    read_state <= R_PIPE;
+                end
+
+                R_PIPE: begin
+                    // Capture memory output into a register for stable presentation
                     mem_rdata_reg <= mem_rdata;
                     read_state <= R_DATA;
                 end
-                
+
                 R_DATA: begin
                     // Present read data from registered value
                     if (read_addr_valid && !read_boundary_cross_burst) begin
