@@ -2,6 +2,12 @@ timeunit 1ns; timeprecision 1ps;
 // Assertions and cover properties for AXI4-lite subset behavior used here
 module axi4_assert_bind (axi4_if.dut_mp dut_if);
 
+  // Confirm bind active and turn assertions on
+  initial begin
+    $asserton;
+    $display("[SVA] axi4_assert_bind bound at %0t on %m", $time);
+  end
+
   // Default clocking and reset
   default clocking cb @(posedge dut_if.ACLK); endclocking
   default disable iff (!dut_if.ARESETn);
