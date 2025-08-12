@@ -13,6 +13,7 @@ module axi4 #(
 
     // Address and burst management
     reg [ADDR_WIDTH-1:0] write_addr, read_addr;
+    reg [ADDR_WIDTH-1:0] write_addr_base, read_addr_base; // captured base addresses
     reg [7:0] write_burst_len, read_burst_len;          // captured AWLEN/ARLEN (beats-1)
     reg [8:0] write_beats_rem, read_beats_rem;          // remaining beats (AWLEN+1/ARLEN+1)
     reg [2:0] write_size, read_size;
@@ -24,14 +25,15 @@ module axi4 #(
     wire read_boundary_cross;
     wire write_addr_valid;
     wire read_addr_valid;
+    reg  write_cross_latched, read_cross_latched; // latched crossing at address handshake
     
     // Address increment calculation
     assign  write_addr_incr = (1 << write_size);
     assign  read_addr_incr  = (1 << read_size);
     
     // Address boundary check (4KB boundary = 12 bits)
-    assign write_boundary_cross = ((write_addr & 12'hFFF) + (write_burst_len << write_size)) > 12'hFFF;
-    assign read_boundary_cross = ((read_addr & 12'hFFF) + (read_burst_len << read_size)) > 12'hFFF;
+    assign write_boundary_cross = ((write_addr_base & 12'hFFF) + ((({1'b0, write_burst_len} + 9'd1) << write_size) - 1)) > 12'hFFF;
+    assign read_boundary_cross  = ((read_addr_base  & 12'hFFF) + ((({1'b0, read_burst_len}  + 9'd1) << read_size)  - 1)) > 12'hFFF;
     
     // Address range check
     assign write_addr_valid = (write_addr >> 2) < MEMORY_DEPTH;
@@ -93,12 +95,16 @@ module axi4 #(
             // Reset address tracking
             write_addr <= {ADDR_WIDTH{1'b0}};
             read_addr <= {ADDR_WIDTH{1'b0}};
+            write_addr_base <= {ADDR_WIDTH{1'b0}};
+            read_addr_base <= {ADDR_WIDTH{1'b0}};
             write_burst_len <= 8'b0;
             read_burst_len <= 8'b0;
             write_beats_rem <= 9'd0;
             read_beats_rem <= 9'd0;
             write_size <= 3'b0;
             read_size <= 3'b0;
+            write_cross_latched <= 1'b0;
+            read_cross_latched <= 1'b0;
             
             mem_rdata_reg <= {DATA_WIDTH{1'b0}};
             
@@ -119,9 +125,11 @@ module axi4 #(
                     if (axi_if.AWVALID && axi_if.AWREADY) begin
                         // Capture address phase information
                         write_addr <= axi_if.AWADDR;
+                        write_addr_base <= axi_if.AWADDR;
                         write_burst_len <= axi_if.AWLEN;
                         write_beats_rem <= {1'b0, axi_if.AWLEN} + 9'd1; // AWLEN+1
                         write_size <= axi_if.AWSIZE;
+                        write_cross_latched <= 1'b0;
                         
                         axi_if.AWREADY <= 1'b0;
                         write_state <= W_ADDR;
@@ -137,7 +145,7 @@ module axi4 #(
                 W_DATA: begin
                     if (axi_if.WVALID && axi_if.WREADY) begin
                         // Check if address is valid
-                        if (write_addr_valid && !write_boundary_cross) begin
+                        if (write_addr_valid && !write_cross_latched) begin
                             // Perform write operation
                             mem_en <= 1'b1;
                             mem_we <= 1'b1;
@@ -152,7 +160,7 @@ module axi4 #(
                             write_state <= W_RESP;
                             
                             // Set response
-                            if (!write_addr_valid || write_boundary_cross) begin
+                            if (!write_addr_valid || write_cross_latched) begin
                                 axi_if.BRESP <= 2'b10;  // SLVERR
                             end else begin
                                 axi_if.BRESP <= 2'b00;  // OKAY
@@ -189,9 +197,11 @@ module axi4 #(
                     if (axi_if.ARVALID && axi_if.ARREADY) begin
                         // Capture address phase information
                         read_addr <= axi_if.ARADDR;
+                        read_addr_base <= axi_if.ARADDR;
                         read_burst_len <= axi_if.ARLEN;
                         read_beats_rem <= {1'b0, axi_if.ARLEN} + 9'd1; // ARLEN+1
                         read_size <= axi_if.ARSIZE;
+                        read_cross_latched <= 1'b0;
                         
                         axi_if.ARREADY <= 1'b0;
                         read_state <= R_ADDR;
@@ -200,7 +210,7 @@ module axi4 #(
                 
                 R_ADDR: begin
                     // Issue memory read for first beat
-                    if (read_addr_valid && !read_boundary_cross) begin
+                    if (read_addr_valid && !read_cross_latched) begin
                         mem_en <= 1'b1;
                         mem_addr <= read_addr >> 2;  // Convert to word address
                     end
@@ -216,7 +226,7 @@ module axi4 #(
                 
                 R_DATA: begin
                     // Present read data from registered value
-                    if (read_addr_valid && !read_boundary_cross) begin
+                    if (read_addr_valid && !read_cross_latched) begin
                         axi_if.RDATA <= mem_rdata_reg;
                         axi_if.RRESP <= 2'b00;  // OKAY
                     end else begin
@@ -236,7 +246,7 @@ module axi4 #(
                             read_beats_rem <= read_beats_rem - 9'd1;
                             
                             // Start next read
-                            if (read_addr_valid && !read_boundary_cross) begin
+                            if (read_addr_valid && !read_cross_latched) begin
                                 mem_en <= 1'b1;
                                 mem_addr <= (read_addr + read_addr_incr) >> 2;
                             end
@@ -252,6 +262,21 @@ module axi4 #(
                 
                 default: read_state <= R_IDLE;
             endcase
+        end
+    end
+
+    // Latch crossing flags at the time of address capture
+    always @(posedge axi_if.ACLK or negedge axi_if.ARESETn) begin
+        if (!axi_if.ARESETn) begin
+            write_cross_latched <= 1'b0;
+            read_cross_latched  <= 1'b0;
+        end else begin
+            if (write_state == W_ADDR) begin
+                write_cross_latched <= write_boundary_cross;
+            end
+            if (read_state == R_ADDR) begin
+                read_cross_latched <= read_boundary_cross;
+            end
         end
     end
 
