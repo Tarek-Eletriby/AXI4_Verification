@@ -35,12 +35,12 @@ class axi4_transaction;
 
   // Ensure total byte span stays within memory and does not cross 4KB boundary
   constraint no_overflow_no_4kb_cross_c {
-    // stay within memory size
-    (awaddr + (awlen << awsize)) <= 16'd4092;
-    (araddr + (arlen << arsize)) <= 16'd4092;
+    // stay within memory size: last byte index <= 4095
+    (awaddr + (((awlen + 1) << awsize) - 1)) <= 16'd4095;
+    (araddr + (((arlen + 1) << arsize) - 1)) <= 16'd4095;
     // do not cross 4KB boundary according to DUT's check
-    ((awaddr & 16'h0FFF) + (awlen << awsize)) <= 16'h0FFF;
-    ((araddr & 16'h0FFF) + (arlen << arsize)) <= 16'h0FFF;
+    ((awaddr & 16'h0FFF) + (((awlen + 1) << awsize) - 1)) <= 16'h0FFF;
+    ((araddr & 16'h0FFF) + (((arlen + 1) << arsize) - 1)) <= 16'h0FFF;
   }
 
   // Use same address and burst length for readback as write

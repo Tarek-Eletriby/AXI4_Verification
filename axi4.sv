@@ -127,7 +127,7 @@ module axi4 #(
                         write_burst_cnt <= axi_if.AWLEN;
                         write_size <= axi_if.AWSIZE;
                         // Latch boundary-cross status for the whole burst
-                        write_boundary_cross_burst <= ((axi_if.AWADDR & 12'hFFF) + (axi_if.AWLEN << axi_if.AWSIZE)) > 12'hFFF;
+                        write_boundary_cross_burst <= (((axi_if.AWADDR & 12'hFFF) + (((axi_if.AWLEN + 1) << axi_if.AWSIZE) - 1)) > 12'hFFF);
                         
                         axi_if.AWREADY <= 1'b0;
                         write_state <= W_ADDR;
@@ -197,7 +197,7 @@ module axi4 #(
                         read_burst_cnt <= axi_if.ARLEN;
                         read_size <= axi_if.ARSIZE;
                         // Latch boundary-cross status for the whole burst
-                        read_boundary_cross_burst <= ((axi_if.ARADDR & 12'hFFF) + (axi_if.ARLEN << axi_if.ARSIZE)) > 12'hFFF;
+                        read_boundary_cross_burst <= (((axi_if.ARADDR & 12'hFFF) + (((axi_if.ARLEN + 1) << axi_if.ARSIZE) - 1)) > 12'hFFF);
                         
                         axi_if.ARREADY <= 1'b0;
                         read_state <= R_ADDR;
