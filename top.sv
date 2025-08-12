@@ -17,6 +17,6 @@ module top;
     axi4_tb axi4_tb(.axi_if(axi_if));
 
     // Explicitly instantiate SVA bind module to guarantee elaboration
-    axi4_assert_bind sva_inst(axi_if);
+    axi4_assert_bind sva_inst(.dut_if(axi_if));
 
 endmodule
