@@ -40,6 +40,9 @@ module axi4_tb(axi4_if.tb_mp axi_if);
 
   cg_axi cov = new();
 
+  bit enable_illegal_trace;
+  initial enable_illegal_trace = $test$plusargs("illegal_trace");
+
   function void configure_stim_storage(int n);
     stim_array = new[n];
     sim_output.delete();
@@ -107,8 +110,9 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       for (int j = 0; j < num_beats; j++) begin
         // Wait for data beat
         do @(posedge axi_if.ACLK); while (!axi_if.RVALID);
-        sim_output.push_back(axi_if.RDATA);
+        // Sample after negedge to ensure DUT NBA updates have settled
         @(negedge axi_if.ACLK);
+        sim_output.push_back(axi_if.RDATA);
       end
       axi_if.RREADY = 0;
     end
@@ -118,11 +122,15 @@ module axi4_tb(axi4_if.tb_mp axi_if);
   task automatic drive_illegal_stim();
     // Illegal write: out-of-range address
     @(negedge axi_if.ACLK);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][WRITE OOR] t=%0t AW addr=%h len=%0d size=%0d", $time, 16'hF000, 8'd1, 3'd2);
     axi_if.AWADDR  = 16'hF000;
     axi_if.AWLEN   = 8'd1;
     axi_if.AWSIZE  = 3'd2;
     axi_if.AWVALID = 1;
     wait (axi_if.AWREADY);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][AW] hs t=%0t addr=%h len=%0d size=%0d", $time, axi_if.AWADDR, axi_if.AWLEN, axi_if.AWSIZE);
     @(negedge axi_if.ACLK);
     axi_if.AWVALID = 0;
 
@@ -131,12 +139,16 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.WVALID = 1;
       axi_if.WLAST  = (j == 1);
       wait (axi_if.WREADY);
+      if (enable_illegal_trace)
+        $display("[ILLEGAL][W] t=%0t beat=%0d data=%h last=%0b", $time, j, axi_if.WDATA, axi_if.WLAST);
       @(negedge axi_if.ACLK);
       axi_if.WVALID = 0;
       axi_if.WLAST  = 0;
     end
 
     wait (axi_if.BVALID);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][B] t=%0t resp=%b", $time, axi_if.BRESP);
     @(negedge axi_if.ACLK);
     axi_if.BREADY = 1;
     @(negedge axi_if.ACLK);
@@ -144,11 +156,15 @@ module axi4_tb(axi4_if.tb_mp axi_if);
 
     // Illegal write: 4KB boundary crossing
     @(negedge axi_if.ACLK);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][WRITE 4KB X] t=%0t AW addr=%h len=%0d size=%0d", $time, 16'h0FF0, 8'd4, 3'd2);
     axi_if.AWADDR  = 16'h0FF0; // 16 bytes before 0x1000 boundary
     axi_if.AWLEN   = 8'd4;     // 5 beats -> 20 bytes, crosses
     axi_if.AWSIZE  = 3'd2;
     axi_if.AWVALID = 1;
     wait (axi_if.AWREADY);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][AW] hs t=%0t addr=%h len=%0d size=%0d", $time, axi_if.AWADDR, axi_if.AWLEN, axi_if.AWSIZE);
     @(negedge axi_if.ACLK);
     axi_if.AWVALID = 0;
 
@@ -157,12 +173,16 @@ module axi4_tb(axi4_if.tb_mp axi_if);
       axi_if.WVALID = 1;
       axi_if.WLAST  = (k == 4);
       wait (axi_if.WREADY);
+      if (enable_illegal_trace)
+        $display("[ILLEGAL][W] t=%0t beat=%0d data=%h last=%0b", $time, k, axi_if.WDATA, axi_if.WLAST);
       @(negedge axi_if.ACLK);
       axi_if.WVALID = 0;
       axi_if.WLAST  = 0;
     end
 
     wait (axi_if.BVALID);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][B] t=%0t resp=%b", $time, axi_if.BRESP);
     @(negedge axi_if.ACLK);
     axi_if.BREADY = 1;
     @(negedge axi_if.ACLK);
@@ -170,16 +190,22 @@ module axi4_tb(axi4_if.tb_mp axi_if);
 
     // Illegal read: out-of-range address
     @(negedge axi_if.ACLK);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][READ OOR] t=%0t AR addr=%h len=%0d size=%0d", $time, 16'hF000, 8'd1, 3'd2);
     axi_if.ARADDR  = 16'hF000;
     axi_if.ARLEN   = 8'd1;
     axi_if.ARSIZE  = 3'd2;
     axi_if.ARVALID = 1;
     wait (axi_if.ARREADY);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][AR] hs t=%0t addr=%h len=%0d size=%0d", $time, axi_if.ARADDR, axi_if.ARLEN, axi_if.ARSIZE);
     @(negedge axi_if.ACLK);
     axi_if.ARVALID = 0;
 
     for (int j = 0; j <= 1; j++) begin
       wait (axi_if.RVALID);
+      if (enable_illegal_trace)
+        $display("[ILLEGAL][R] t=%0t beat=%0d data=%h resp=%b last=%0b", $time, j, axi_if.RDATA, axi_if.RRESP, axi_if.RLAST);
       axi_if.RREADY = 1;
       @(negedge axi_if.ACLK);
       axi_if.RREADY = 0;
@@ -187,16 +213,22 @@ module axi4_tb(axi4_if.tb_mp axi_if);
 
     // Illegal read: 4KB boundary crossing
     @(negedge axi_if.ACLK);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][READ 4KB X] t=%0t AR addr=%h len=%0d size=%0d", $time, 16'h0FF0, 8'd4, 3'd2);
     axi_if.ARADDR  = 16'h0FF0;
     axi_if.ARLEN   = 8'd4;
     axi_if.ARSIZE  = 3'd2;
     axi_if.ARVALID = 1;
     wait (axi_if.ARREADY);
+    if (enable_illegal_trace)
+      $display("[ILLEGAL][AR] hs t=%0t addr=%h len=%0d size=%0d", $time, axi_if.ARADDR, axi_if.ARLEN, axi_if.ARSIZE);
     @(negedge axi_if.ACLK);
     axi_if.ARVALID = 0;
 
     for (int m = 0; m <= 4; m++) begin
       wait (axi_if.RVALID);
+      if (enable_illegal_trace)
+        $display("[ILLEGAL][R] t=%0t beat=%0d data=%h resp=%b last=%0b", $time, m, axi_if.RDATA, axi_if.RRESP, axi_if.RLAST);
       axi_if.RREADY = 1;
       @(negedge axi_if.ACLK);
       axi_if.RREADY = 0;
